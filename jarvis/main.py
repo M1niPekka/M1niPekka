@@ -102,7 +102,7 @@ def _lan_ips() -> list[tuple[str, str]]:
     return candidates
 
 
-def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) -> None:
+def run_ui_mode(lan: bool = False, public: bool = False, port: int = 5050, open_browser: bool = True) -> None:
     import secrets
     import webbrowser
 
@@ -133,11 +133,28 @@ def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) 
 
     host = "0.0.0.0" if lan else "127.0.0.1"
     token = config.ui_token
-    if lan and not token:
+    if (lan or public) and not token:
         token = secrets.token_urlsafe(12)
-        print("[jarvis] --lan is on but JARVIS_UI_TOKEN isn't set -- generated a one-time password for this session.")
+        print("[jarvis] No JARVIS_UI_TOKEN set -- generated a one-time password for this session.")
 
     app = create_app(state, token=token)
+
+    tunnel_process = None
+    if public:
+        print("[jarvis] Starting a public tunnel via cloudflared...")
+        from jarvis.ui.tunnel import start_quick_tunnel
+        tunnel_process, public_url = start_quick_tunnel(port)
+        if tunnel_process is None:
+            print("[jarvis] cloudflared isn't installed -- run `brew install cloudflared` and try again.")
+            print("[jarvis]   Falling back to local-only access this run.")
+        elif public_url is None:
+            print("[jarvis] Tunnel didn't come up in time -- check your internet connection, or try again.")
+        else:
+            print(f"[jarvis] Tap this link on your phone (works on any network, not just WiFi): {public_url}")
+            print(f"[jarvis]   Password: {token}")
+            print("[jarvis]   This link is public on the internet -- anyone who gets it can reach the login "
+                  "prompt for your Mac, so don't post or share it. It's random and stops working once "
+                  "Jarvis exits.")
 
     if lan:
         candidates = _lan_ips()
@@ -145,20 +162,22 @@ def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) 
             print("[jarvis] Couldn't find any network IP -- are you connected to WiFi?")
         else:
             best_iface, best_ip = candidates[0]
-            print(f"[jarvis] UI reachable on your network at http://{best_ip}:{port}  (interface: {best_iface})")
+            print(f"[jarvis] UI also reachable on your network at http://{best_ip}:{port}  (interface: {best_iface})")
             if len(candidates) > 1:
                 others = ", ".join(f"http://{ip}:{port} ({iface})" for iface, ip in candidates[1:])
-                print(f"[jarvis]   If that one doesn't load on your phone, also try: {others}")
-            print(f"[jarvis]   On your phone: open the URL (same WiFi), username can be anything, password: {token}")
+                print(f"[jarvis]   If that one doesn't load, also try: {others}")
+            print(f"[jarvis]   Same WiFi only, username can be anything, password: {token}")
             print("[jarvis]   Can't reach it? See 'Troubleshooting phone access' in jarvis/README.md.")
-        local_url = f"http://127.0.0.1:{port}"
-    else:
-        local_url = f"http://{host}:{port}"
-        print(f"[jarvis] UI running at {local_url}")
+    elif not public:
+        print(f"[jarvis] UI running at http://{host}:{port}")
 
-    if open_browser:
-        webbrowser.open(local_url)
-    app.run(host=host, port=port, debug=False, threaded=True)
+    try:
+        if open_browser:
+            webbrowser.open(f"http://127.0.0.1:{port}")
+        app.run(host=host, port=port, debug=False, threaded=True)
+    finally:
+        if tunnel_process:
+            tunnel_process.terminate()
 
 
 def main() -> None:
@@ -169,11 +188,15 @@ def main() -> None:
         "--lan", action="store_true",
         help="With --ui, bind to your network (not just localhost) so other devices, e.g. your phone, can reach it. Requires a password -- see JARVIS_UI_TOKEN.",
     )
+    parser.add_argument(
+        "--public", action="store_true",
+        help="With --ui, print a tap-anywhere https://*.trycloudflare.com link (via `cloudflared`) that works on any network, not just WiFi. Requires a password -- see JARVIS_UI_TOKEN.",
+    )
     parser.add_argument("--no-browser", action="store_true", help="With --ui, don't auto-open a browser tab")
     args = parser.parse_args()
 
     if args.ui:
-        run_ui_mode(lan=args.lan, open_browser=not args.no_browser)
+        run_ui_mode(lan=args.lan, public=args.public, open_browser=not args.no_browser)
     elif args.text:
         run_text_mode()
     else:

@@ -45,30 +45,42 @@ ask through), so with the mic off they're declined automatically.
 ### Controlling it from your phone
 
 Jarvis itself has to keep running on your Mac — it's the Mac that actually
-opens apps, takes screenshots, runs shell commands, etc. What your phone
-connects to is the web UI, over your home WiFi:
+opens apps, takes screenshots, runs shell commands, etc. Your phone just
+connects to its web UI. Two ways to do that:
 
+**`--public` (recommended, works anywhere):**
+```bash
+brew install cloudflared      # one-time
+python -m jarvis.main --ui --public
+```
+This opens a free [Cloudflare quick tunnel](https://developers.cloudflare.com/pages/configuration/serving-pages/#dev-server) —
+no account needed — and prints a real link:
+```
+[jarvis] Tap this link on your phone (works on any network, not just WiFi): https://random-words-1234.trycloudflare.com
+[jarvis]   Password: 8f3k2n...
+```
+Tap that link on your phone from *anywhere* — cellular data, a different
+WiFi, doesn't matter — since it's a normal internet connection, not
+something that depends on both devices sharing a network. This sidesteps
+every WiFi headache (client isolation, firewalls, wrong IPs) because
+there's no LAN involved at all. The link is random and stops working the
+moment you quit Jarvis, but **treat it like a password while it's live**
+— anyone who gets the link can reach the login prompt for your Mac. Don't
+post it, screenshot-share it, or leave it in a public chat.
+
+**`--lan` (same-WiFi only, no extra install):**
 ```bash
 python -m jarvis.main --ui --lan
 ```
+Prints a `http://192.168.x.x:5050`-style link that only works when your
+phone is on the exact same WiFi network as the Mac. See
+[Troubleshooting phone access](#troubleshooting-phone-access) below if
+that doesn't load.
 
-This prints something like:
-```
-[jarvis] UI reachable on your network at http://192.168.1.42:5050
-[jarvis]   On your phone: open that URL (same WiFi), username can be anything, password: 8f3k2n...
-```
-Open that URL in Safari/Chrome on your phone (same WiFi network as the
-Mac), enter the password when prompted, and you've got the same chat
-window — commands you send still run on the Mac.
-
-`--lan` requires a password (HTTP Basic Auth) because without one, anyone
-else on the same network could reach it and run shell commands on your
-Mac. It auto-generates a random one-time password each run; set
-`JARVIS_UI_TOKEN` in `.env` if you want a fixed password instead of a new
-one every time. The Mac's firewall may prompt you to allow incoming
-connections the first time — allow it, or `--lan` won't be reachable.
-This is still only safe on networks you trust (home WiFi, not a coffee
-shop) — it's LAN-only access control, not internet-facing auth.
+Both require a password (HTTP Basic Auth) — auto-generated fresh each run,
+or set `JARVIS_UI_TOKEN` in `.env` for a fixed one. Without it, anyone who
+reaches the link (on your network for `--lan`, or anyone with the URL for
+`--public`) could run shell commands on your Mac.
 
 ### Troubleshooting phone access
 
@@ -106,10 +118,15 @@ The UI is an installable PWA (manifest + icon + service worker), so it can
 sit on your home screen and open in its own window instead of a browser
 tab:
 
-- **iOS (Safari)**: open the `--lan` URL → Share button → **Add to Home Screen**.
-- **Android (Chrome)**: open the `--lan` URL → ⋮ menu → **Add to Home screen** / **Install app**.
+- **iOS (Safari)**: open the `--public` or `--lan` URL → Share button → **Add to Home Screen**.
+- **Android (Chrome)**: open the URL → ⋮ menu → **Add to Home screen** / **Install app**.
 
-It still needs your Mac reachable on the same WiFi and Jarvis running —
+Note that a `--public` link changes every run, so a home-screen icon
+pointing at an old one will stop working next time — set `JARVIS_UI_TOKEN`
+and consider `cloudflared tunnel` with a named/persistent tunnel (beyond
+what's set up here) if you want a stable installed link.
+
+It still needs your Mac reachable and Jarvis running —
 installing it just changes how you launch and see it, not what it needs
 to work. The service worker only caches the interface itself (HTML/CSS/JS)
 so it opens instantly; every chat message and status check still talks
@@ -158,11 +175,13 @@ laptop password.
 5. Grant permissions the first time you run it:
    - **Microphone**: System Settings → Privacy & Security → Microphone → allow Terminal (or your IDE)
    - **Accessibility**: System Settings → Privacy & Security → Accessibility → allow Terminal (needed for lock-screen keystroke + some `osascript` actions)
-6. Run it:
+6. (Optional, for phone access) `brew install cloudflared`
+7. Run it:
    ```bash
-   python -m jarvis.main          # voice loop in the terminal
-   python -m jarvis.main --ui     # Claude-styled web chat at localhost:5050
-   python -m jarvis.main --text   # plain terminal REPL, no mic needed
+   python -m jarvis.main             # voice loop in the terminal
+   python -m jarvis.main --ui        # Claude-styled web chat at localhost:5050
+   python -m jarvis.main --ui --public  # + a tap-anywhere phone link
+   python -m jarvis.main --text      # plain terminal REPL, no mic needed
    ```
    In voice mode, say "Jarvis" and wait for it to respond before speaking
    your command.
@@ -189,6 +208,7 @@ jarvis/
     tools.py         tool schemas + dispatch table, shared by all brains
   ui/
     app.py           Flask app: chat/status/logs/voice-toggle endpoints
+    tunnel.py        cloudflared quick-tunnel for --public
     static/          Claude-styled HTML/CSS/JS front end
 ```
 
