@@ -19,6 +19,15 @@ def _env_bool(name: str, default: bool) -> bool:
 class Config:
     anthropic_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
     model: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+
+    # Which brain to use: "auto" (Claude if a key is set, else Hermes, else
+    # rule-based), "claude", "hermes", or "intents".
+    brain: str = os.getenv("BRAIN", "auto").lower()
+
+    # Hermes (Nous Research) runs locally via Ollama -- no API key needed.
+    hermes_host: str = os.getenv("HERMES_HOST", "http://localhost:11434")
+    hermes_model: str = os.getenv("HERMES_MODEL", "hermes3")
+
     wake_word: str = os.getenv("WAKE_WORD", "jarvis").lower()
     voice: str = os.getenv("TTS_VOICE", "Daniel")
     allow_shell: bool = _env_bool("ALLOW_SHELL", True)

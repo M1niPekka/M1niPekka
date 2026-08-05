@@ -1,5 +1,6 @@
 """Entrypoint. Voice mode (default): say the wake word, then speak a command.
 Text mode (`--text`): type commands instead, useful for testing without a mic.
+UI mode (`--ui`): a local Claude-styled web chat window at localhost.
 """
 
 import argparse
@@ -9,10 +10,19 @@ from jarvis.config import config
 
 
 def build_brain(confirm):
-    if config.anthropic_api_key:
+    choice = config.brain
+
+    if choice == "claude" or (choice == "auto" and config.anthropic_api_key):
         from jarvis.brain.llm import ClaudeBrain
         return ClaudeBrain(confirm=confirm)
-    print("[jarvis] No ANTHROPIC_API_KEY set -- using limited rule-based commands.")
+
+    if choice == "hermes" or choice == "auto":
+        from jarvis.brain.hermes import HermesBrain
+        print(f"[jarvis] Using Hermes ({config.hermes_model} via {config.hermes_host}) as the brain.")
+        print("[jarvis] If Ollama isn't running, replies will explain how to start it.")
+        return HermesBrain(confirm=confirm)
+
+    print("[jarvis] Using limited rule-based commands (BRAIN=intents).")
     from jarvis.brain.intents import IntentBrain
     return IntentBrain(confirm=confirm)
 
@@ -66,12 +76,52 @@ def run_voice_mode() -> None:
         speaker.say("Goodbye.")
 
 
+def run_ui_mode(host: str = "127.0.0.1", port: int = 5050, open_browser: bool = True) -> None:
+    import webbrowser
+
+    from jarvis.ui.app import JarvisState, create_app
+
+    from jarvis.audio.speaker import Speaker
+    speaker = Speaker()
+
+    try:
+        from jarvis.audio.listener import Listener
+        listener = Listener()
+    except Exception as e:
+        print(f"[jarvis] No microphone available ({e}) -- voice toggle disabled, chat still works.")
+        listener = None
+
+    state = JarvisState(brain=None, speaker=speaker, listener=listener)
+
+    def confirm(prompt: str) -> bool:
+        # Only voice can confirm risky commands in UI mode; with no active
+        # voice session there's no channel to ask through, so default to no.
+        if state.listening and listener is not None:
+            speaker.say(prompt)
+            reply = listener.listen_command(timeout=6, phrase_time_limit=4)
+            return reply.strip().lower().startswith(("yes", "yeah", "confirm", "go ahead", "do it"))
+        return False
+
+    state.brain = build_brain(confirm)
+
+    app = create_app(state)
+    url = f"http://{host}:{port}"
+    print(f"[jarvis] UI running at {url}")
+    if open_browser:
+        webbrowser.open(url)
+    app.run(host=host, port=port, debug=False)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Jarvis desktop assistant")
     parser.add_argument("--text", action="store_true", help="Run in text mode instead of voice mode")
+    parser.add_argument("--ui", action="store_true", help="Run the local Claude-styled web UI")
+    parser.add_argument("--no-browser", action="store_true", help="With --ui, don't auto-open a browser tab")
     args = parser.parse_args()
 
-    if args.text:
+    if args.ui:
+        run_ui_mode(open_browser=not args.no_browser)
+    elif args.text:
         run_text_mode()
     else:
         run_voice_mode()

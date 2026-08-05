@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot" id="statusDot"></span>
+        <h1>Jarvis</h1>
+      </div>
+      <div class="status" id="statusText">connecting&hellip;</div>
+      <button class="voiceBtn" id="voiceBtn">Start listening</button>
+    </header>
+
+    <main class="layout">
+      <section class="chat">
+        <div class="messages" id="messages">
+          <div class="msg assistant">
+            <div class="bubble">Hi, I'm Jarvis. Type a command below, or start listening and say "jarvis" to talk to me.</div>
+          </div>
+        </div>
+        <form class="composer" id="composer">
+          <input type="text" id="input" placeholder="Ask Jarvis to do something&hellip;" autocomplete="off" />
+          <button type="submit">Send</button>
+        </form>
+      </section>
+
+      <aside class="logs">
+        <div class="logsHeader">Command log</div>
+        <pre class="logsBody" id="logsBody">(no shell commands run yet)</pre>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

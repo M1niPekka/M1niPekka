@@ -12,6 +12,7 @@ from jarvis.actions import apps, system
 
 class IntentBrain:
     def __init__(self, confirm: Callable[[str], bool] | None = None):
+        self.name = "Rule-based (no AI)"
         self.confirm = confirm  # accepted for interface parity with ClaudeBrain, unused here
 
     def handle(self, text: str) -> str:

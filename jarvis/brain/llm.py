@@ -19,6 +19,7 @@ endless clarifying questions. If a tool call fails or is declined, tell the user
 class ClaudeBrain:
     def __init__(self, confirm: Callable[[str], bool] | None = None):
         self.client = anthropic.Anthropic(api_key=config.anthropic_api_key)
+        self.name = f"Claude ({config.model})"
         self.confirm = confirm or (lambda prompt: input(f"{prompt} [y/N] ").strip().lower().startswith("y"))
         self.history: list[dict] = []
 
