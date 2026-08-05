@@ -7,6 +7,8 @@ tool/function calling, which Ollama exposes through an OpenAI-style `tools`
 field on /api/chat.
 """
 
+from __future__ import annotations
+
 import json
 import urllib.error
 import urllib.request

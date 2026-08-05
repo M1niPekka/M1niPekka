@@ -1,5 +1,7 @@
 """Claude-powered brain: turns natural language into tool calls against the desktop."""
 
+from __future__ import annotations
+
 from typing import Callable
 
 import anthropic

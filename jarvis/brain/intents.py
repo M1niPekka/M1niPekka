@@ -4,6 +4,8 @@ Covers a handful of common commands with simple keyword matching so Jarvis
 is still useful out of the box before you set up Claude tool-calling.
 """
 
+from __future__ import annotations
+
 import re
 from typing import Callable
 

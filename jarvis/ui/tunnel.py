@@ -9,6 +9,8 @@ Requires the `cloudflared` binary (`brew install cloudflared`); this module
 only shells out to it, nothing here talks to Cloudflare directly.
 """
 
+from __future__ import annotations
+
 import re
 import shutil
 import subprocess

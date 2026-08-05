@@ -1,5 +1,7 @@
 """Text-to-speech via macOS's built-in `say` command -- no extra deps, no API key."""
 
+from __future__ import annotations
+
 import subprocess
 
 from jarvis.config import config

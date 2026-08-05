@@ -4,6 +4,8 @@ Uses SpeechRecognition with the free Google Web Speech API for STT. No API
 key is required for this endpoint, but it does need network access.
 """
 
+from __future__ import annotations
+
 import speech_recognition as sr
 
 
