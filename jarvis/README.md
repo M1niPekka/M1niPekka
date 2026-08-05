@@ -37,10 +37,38 @@ can do — just which model is deciding how to do it.
 (`localhost:5050`) instead of the terminal voice loop: a chat panel, a
 status pill showing which brain/wake-word is active, a "Start listening"
 toggle to turn the mic on/off from the browser, and a live tail of
-`jarvis/logs/commands.log`. It runs entirely on localhost — nothing is
-exposed to the network. In UI mode, risky shell commands can only be
+`jarvis/logs/commands.log`. By default it only binds to localhost — nothing
+is exposed to the network. In UI mode, risky shell commands can only be
 confirmed while voice listening is active (there's no other channel to
 ask through), so with the mic off they're declined automatically.
+
+### Controlling it from your phone
+
+Jarvis itself has to keep running on your Mac — it's the Mac that actually
+opens apps, takes screenshots, runs shell commands, etc. What your phone
+connects to is the web UI, over your home WiFi:
+
+```bash
+python -m jarvis.main --ui --lan
+```
+
+This prints something like:
+```
+[jarvis] UI reachable on your network at http://192.168.1.42:5050
+[jarvis]   On your phone: open that URL (same WiFi), username can be anything, password: 8f3k2n...
+```
+Open that URL in Safari/Chrome on your phone (same WiFi network as the
+Mac), enter the password when prompted, and you've got the same chat
+window — commands you send still run on the Mac.
+
+`--lan` requires a password (HTTP Basic Auth) because without one, anyone
+else on the same network could reach it and run shell commands on your
+Mac. It auto-generates a random one-time password each run; set
+`JARVIS_UI_TOKEN` in `.env` if you want a fixed password instead of a new
+one every time. The Mac's firewall may prompt you to allow incoming
+connections the first time — allow it, or `--lan` won't be reachable.
+This is still only safe on networks you trust (home WiFi, not a coffee
+shop) — it's LAN-only access control, not internet-facing auth.
 
 ## Safety model
 

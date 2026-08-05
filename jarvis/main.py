@@ -76,7 +76,20 @@ def run_voice_mode() -> None:
         speaker.say("Goodbye.")
 
 
-def run_ui_mode(host: str = "127.0.0.1", port: int = 5050, open_browser: bool = True) -> None:
+def _lan_ip() -> str:
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))  # doesn't actually send anything, just picks a route
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) -> None:
+    import secrets
     import webbrowser
 
     from jarvis.ui.app import JarvisState, create_app
@@ -104,11 +117,25 @@ def run_ui_mode(host: str = "127.0.0.1", port: int = 5050, open_browser: bool = 
 
     state.brain = build_brain(confirm)
 
-    app = create_app(state)
-    url = f"http://{host}:{port}"
-    print(f"[jarvis] UI running at {url}")
+    host = "0.0.0.0" if lan else "127.0.0.1"
+    token = config.ui_token
+    if lan and not token:
+        token = secrets.token_urlsafe(12)
+        print("[jarvis] --lan is on but JARVIS_UI_TOKEN isn't set -- generated a one-time password for this session.")
+
+    app = create_app(state, token=token)
+
+    if lan:
+        lan_ip = _lan_ip()
+        print(f"[jarvis] UI reachable on your network at http://{lan_ip}:{port}")
+        print(f"[jarvis]   On your phone: open that URL (same WiFi), username can be anything, password: {token}")
+        local_url = f"http://127.0.0.1:{port}"
+    else:
+        local_url = f"http://{host}:{port}"
+        print(f"[jarvis] UI running at {local_url}")
+
     if open_browser:
-        webbrowser.open(url)
+        webbrowser.open(local_url)
     app.run(host=host, port=port, debug=False)
 
 
@@ -116,11 +143,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Jarvis desktop assistant")
     parser.add_argument("--text", action="store_true", help="Run in text mode instead of voice mode")
     parser.add_argument("--ui", action="store_true", help="Run the local Claude-styled web UI")
+    parser.add_argument(
+        "--lan", action="store_true",
+        help="With --ui, bind to your network (not just localhost) so other devices, e.g. your phone, can reach it. Requires a password -- see JARVIS_UI_TOKEN.",
+    )
     parser.add_argument("--no-browser", action="store_true", help="With --ui, don't auto-open a browser tab")
     args = parser.parse_args()
 
     if args.ui:
-        run_ui_mode(open_browser=not args.no_browser)
+        run_ui_mode(lan=args.lan, open_browser=not args.no_browser)
     elif args.text:
         run_text_mode()
     else:

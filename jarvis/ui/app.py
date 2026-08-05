@@ -1,13 +1,15 @@
 """Local web UI for Jarvis: a Claude-styled chat window with live status and a
-command-log tail. Runs entirely on localhost -- nothing here is exposed to
-the network.
+command-log tail. By default this only binds to localhost; jarvis/main.py's
+`--lan` flag opens it up to your network (e.g. for phone access) and requires
+an HTTP Basic Auth token to do so -- see create_app()'s `token` argument.
 """
 
+import hmac
 import threading
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from jarvis import safety
 from jarvis.config import config
@@ -62,8 +64,17 @@ class JarvisState:
             self.speaker.say(reply)
 
 
-def create_app(state: JarvisState) -> Flask:
+def create_app(state: JarvisState, token: str = "") -> Flask:
     app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="")
+
+    if token:
+        @app.before_request
+        def _check_auth():
+            auth = request.authorization
+            if not auth or not hmac.compare_digest(auth.password or "", token):
+                return Response(
+                    "Authentication required", 401, {"WWW-Authenticate": 'Basic realm="Jarvis"'},
+                )
 
     @app.get("/")
     def index():

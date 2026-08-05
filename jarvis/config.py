@@ -30,6 +30,11 @@ class Config:
 
     wake_word: str = os.getenv("WAKE_WORD", "jarvis").lower()
     voice: str = os.getenv("TTS_VOICE", "Daniel")
+
+    # Password for the web UI (username is ignored, HTTP Basic Auth).
+    # Required whenever the UI binds to anything other than localhost --
+    # see `--lan` in jarvis/main.py, which auto-generates one if unset.
+    ui_token: str = os.getenv("JARVIS_UI_TOKEN", "")
     allow_shell: bool = _env_bool("ALLOW_SHELL", True)
     confirm_dangerous: bool = _env_bool("CONFIRM_DANGEROUS", True)
     command_timeout: int = int(os.getenv("SHELL_TIMEOUT", "30"))
