@@ -15,10 +15,11 @@ I like bringing energy and creativity into everything I do — whether it’s bu
 
 ## 🚀 About This Project
 
-[Describe your project here — what it does, what problem it solves, and how it works.]
-
-Example:  
-> This Python program demonstrates how to perform a sequential search in a list and provides feedback on the efficiency of the search process.
+**Jarvis** — a voice-controlled AI desktop assistant for macOS, built with Claude.
+Say the wake word and it opens apps, manages files, controls system settings, and
+can run shell commands to do pretty much anything else — with logging and spoken
+confirmation on anything destructive. See [`jarvis/README.md`](jarvis/README.md)
+for setup and details.
 
 ---
 
