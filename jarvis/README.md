@@ -70,6 +70,21 @@ connections the first time — allow it, or `--lan` won't be reachable.
 This is still only safe on networks you trust (home WiFi, not a coffee
 shop) — it's LAN-only access control, not internet-facing auth.
 
+### Installing it as an app on your phone
+
+The UI is an installable PWA (manifest + icon + service worker), so it can
+sit on your home screen and open in its own window instead of a browser
+tab:
+
+- **iOS (Safari)**: open the `--lan` URL → Share button → **Add to Home Screen**.
+- **Android (Chrome)**: open the `--lan` URL → ⋮ menu → **Add to Home screen** / **Install app**.
+
+It still needs your Mac reachable on the same WiFi and Jarvis running —
+installing it just changes how you launch and see it, not what it needs
+to work. The service worker only caches the interface itself (HTML/CSS/JS)
+so it opens instantly; every chat message and status check still talks
+live to your Mac and won't work if it's asleep or off the network.
+
 ## Safety model
 
 This gives an AI real control over your machine, so a few guardrails are

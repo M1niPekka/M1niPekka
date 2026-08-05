@@ -88,3 +88,11 @@ refreshLogs();
 setInterval(refreshStatus, 3000);
 setInterval(refreshMessages, 2000);
 setInterval(refreshLogs, 4000);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* PWA install still works without offline caching */
+    });
+  });
+}
