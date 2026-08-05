@@ -76,16 +76,30 @@ def run_voice_mode() -> None:
         speaker.say("Goodbye.")
 
 
-def _lan_ip() -> str:
+def _lan_ips() -> list[tuple[str, str]]:
+    """(interface, ipv4) pairs for every non-loopback address on the machine,
+    Wi-Fi/Ethernet interfaces first. On a VPN, the "obvious" route can point
+    at a tunnel interface instead of the actual LAN -- so we list every
+    candidate rather than guessing just one."""
+    import psutil
     import socket
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))  # doesn't actually send anything, just picks a route
-        return s.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-    finally:
-        s.close()
+
+    candidates = []
+    for iface, addrs in psutil.net_if_addrs().items():
+        for addr in addrs:
+            if addr.family == socket.AF_INET and not addr.address.startswith("127."):
+                candidates.append((iface, addr.address))
+
+    def rank(item: tuple[str, str]) -> int:
+        iface = item[0]
+        if iface.startswith("en"):  # macOS Wi-Fi/Ethernet
+            return 0
+        if iface.startswith(("utun", "ppp", "awdl", "llw", "tun", "tap")):  # VPNs, AirDrop, etc.
+            return 2
+        return 1
+
+    candidates.sort(key=rank)
+    return candidates
 
 
 def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) -> None:
@@ -126,9 +140,17 @@ def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) 
     app = create_app(state, token=token)
 
     if lan:
-        lan_ip = _lan_ip()
-        print(f"[jarvis] UI reachable on your network at http://{lan_ip}:{port}")
-        print(f"[jarvis]   On your phone: open that URL (same WiFi), username can be anything, password: {token}")
+        candidates = _lan_ips()
+        if not candidates:
+            print("[jarvis] Couldn't find any network IP -- are you connected to WiFi?")
+        else:
+            best_iface, best_ip = candidates[0]
+            print(f"[jarvis] UI reachable on your network at http://{best_ip}:{port}  (interface: {best_iface})")
+            if len(candidates) > 1:
+                others = ", ".join(f"http://{ip}:{port} ({iface})" for iface, ip in candidates[1:])
+                print(f"[jarvis]   If that one doesn't load on your phone, also try: {others}")
+            print(f"[jarvis]   On your phone: open the URL (same WiFi), username can be anything, password: {token}")
+            print("[jarvis]   Can't reach it? See 'Troubleshooting phone access' in jarvis/README.md.")
         local_url = f"http://127.0.0.1:{port}"
     else:
         local_url = f"http://{host}:{port}"
@@ -136,7 +158,7 @@ def run_ui_mode(lan: bool = False, port: int = 5050, open_browser: bool = True) 
 
     if open_browser:
         webbrowser.open(local_url)
-    app.run(host=host, port=port, debug=False)
+    app.run(host=host, port=port, debug=False, threaded=True)
 
 
 def main() -> None:

@@ -70,6 +70,36 @@ connections the first time — allow it, or `--lan` won't be reachable.
 This is still only safe on networks you trust (home WiFi, not a coffee
 shop) — it's LAN-only access control, not internet-facing auth.
 
+### Troubleshooting phone access
+
+"UI running, but the phone can't load the page" is a networking problem
+between the two devices, not a Jarvis bug. In rough order of likelihood:
+
+1. **Different networks.** Phone and Mac must be on the *same* WiFi
+   network. Check for: phone on cellular data with WiFi off, phone/Mac on
+   different bands that show as separate networks (`Home` vs `Home-5G`),
+   or one of them connected to a guest network.
+2. **Client isolation.** Many networks — school/office WiFi especially,
+   and increasingly home mesh routers and guest networks — deliberately
+   block devices on the same WiFi from reaching each other, precisely to
+   stop this kind of thing. If you're at school, this is the most likely
+   cause and there's no workaround short of a network you control. Test
+   on home WiFi to confirm.
+3. **macOS Firewall.** System Settings → Network → Firewall. If it's on,
+   click Options and make sure "Block all incoming connections" is off,
+   and allow incoming connections for Python when prompted.
+4. **VPN.** If the Mac is on a VPN, disconnect it — VPNs often route all
+   traffic through a tunnel interface and can block LAN access entirely,
+   and can also throw off which IP is actually reachable.
+5. **Wrong IP.** `python -m jarvis.main --ui --lan` now lists every
+   network IP it finds, ranked with Wi-Fi/Ethernet first — if the top one
+   doesn't work, try the others it prints. You can cross-check against
+   System Settings → Network → Wi-Fi → Details → TCP/IP.
+6. **Sanity check from the Mac itself**: run `curl -u x:<password>
+   http://<the-ip>:5050/` in a second terminal. If that fails too, it's
+   not a phone problem — the server isn't actually reachable at that
+   address.
+
 ### Installing it as an app on your phone
 
 The UI is an installable PWA (manifest + icon + service worker), so it can
