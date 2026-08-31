@@ -1,0 +1,9 @@
+{
+  "name": "study",
+  "description": "Study workflows for high school: build a focused guide for an upcoming test, turn notes into flashcards and quiz yourself, plan backwards from a test date, clean messy class notes into a study sheet, and check what's actually due.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Enzo Rapini"
+  },
+  "keywords": ["study", "school", "exams", "flashcards", "notes", "sat"]
+}

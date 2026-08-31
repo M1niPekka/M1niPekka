@@ -1,0 +1,17 @@
+{
+  "name": "enzo-study",
+  "owner": {
+    "name": "Enzo Rapini"
+  },
+  "metadata": {
+    "description": "Personal study and school-productivity plugins.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "study",
+      "source": "./plugins/study",
+      "description": "Study workflows for high school: exam guides, flashcards with active recall, backwards-planned study schedules, notes cleanup, and a what's-due check."
+    }
+  ]
+}
