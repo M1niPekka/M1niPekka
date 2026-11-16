@@ -13,6 +13,7 @@ ticket = load("trader-broker", "ticket")
 
 CFG_PATH = os.path.join(ROOT, "trader-budget", "config.example.json")
 TSLA_PATH = os.path.join(FIX, "trader-risk", "orders-tsla.json")
+EDGE_PATH = os.path.join(FIX, "trader-risk", "backtest-edge.json")
 V1_ORDERS_PATH = os.path.join(FIX, "trader-risk", "orders-reel.json")
 NOW = "2026-10-19 10:15"
 TODAY = "2026-10-19"
@@ -22,7 +23,8 @@ QUOTE_TIME = datetime.datetime(2026, 10, 19, 14, 52, 13)   # Yahoo's TSLA quote 
 # v1's rules with every day-trade check switched off: the long-term checks still hold
 V1 = {"budget": 5000, "cash_buffer_pct": 10, "max_position_pct": 25, "max_order_usd": 2000, "min_order_usd": 5,
       "max_orders_per_day": 10, "require_stop": False, "no_entries_before": None, "no_entries_after": None,
-      "max_trades_per_day": 0, "max_daily_loss_usd": 0, "max_loss_per_trade_usd": 0, "min_reward_risk": 0}
+      "max_trades_per_day": 0, "max_daily_loss_usd": 0, "max_loss_per_trade_usd": 0, "min_reward_risk": 0,
+      "require_edge": False}
 
 
 def at(text):
@@ -32,6 +34,7 @@ def at(text):
 def cfg(**over):
     with open(CFG_PATH) as fh:
         c = json.load(fh)
+    c["require_edge"] = False        # the edge gate has its own tests (EdgeGate); these test the other rules
     c.update(over)
     return c
 
@@ -120,7 +123,7 @@ class TheReel(unittest.TestCase):
             none = os.path.join(d, "none")
             buf = io.StringIO()
             with redirect_stdout(buf):
-                code = check.main(["--orders", TSLA_PATH, "--config", CFG_PATH, "--portfolio", none,
+                code = check.main(["--orders", TSLA_PATH, "--config", CFG_PATH, "--backtest", EDGE_PATH, "--portfolio", none,
                                    "--prices", none, "--state", none, "--now", NOW, "--out", out])
             text = buf.getvalue()
             self.assertEqual(code, 0)
@@ -469,7 +472,7 @@ class Cli(unittest.TestCase):
                            "detail": {"TSLA": {"time": "2026-10-19T14:52:13Z", "fetched": "2026-10-19T14:55:00Z"}}},
                           fh)
             none = os.path.join(d, "none")
-            base = ["--orders", TSLA_PATH, "--config", CFG_PATH, "--portfolio", none, "--prices", pp,
+            base = ["--orders", TSLA_PATH, "--config", CFG_PATH, "--backtest", EDGE_PATH, "--portfolio", none, "--prices", pp,
                     "--state", none, "--no-write"]
             buf = io.StringIO()
             with redirect_stdout(buf):
@@ -521,3 +524,62 @@ class Cli(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EdgeGate(unittest.TestCase):
+    """require_edge: an ORB entry needs a fresh backtest that found an edge after costs."""
+
+    def bt(self, **over):
+        with open(EDGE_PATH) as fh:
+            b = json.load(fh)
+        b.update(over)
+        return b
+
+    def run_one(self, order=None, backtest=None, **over):
+        c = cfg(**dict({"require_edge": True}, **over))
+        return check.check([order or tsla()], c, now=at(NOW), backtest=backtest)["results"][0]
+
+    def test_no_backtest_blocks(self):
+        r = self.run_one()
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertTrue(any(x.startswith("edge: no trader/backtest.json") for x in r["reasons"]), r["reasons"])
+
+    def test_a_backtest_with_no_edge_blocks(self):
+        r = self.run_one(backtest=self.bt(edge=False, edge_reason="out-of-sample average -0.086R"))
+        self.assertEqual(r["verdict"], "BLOCK")
+        self.assertIn("-0.086R", " ".join(r["reasons"]))
+
+    def test_a_stale_backtest_blocks(self):
+        r = self.run_one(backtest=self.bt(created_at="2026-10-01T12:00:00Z"))
+        self.assertIn("older than 7 days", " ".join(r["reasons"]))
+
+    def test_a_fresh_edge_passes(self):
+        r = self.run_one(backtest=self.bt())
+        self.assertEqual(r["verdict"], "PASS", r["reasons"])
+
+    def test_the_target_must_match_the_tested_version(self):
+        b = self.bt()
+        b["best"] = dict(b["best"], variant=dict(b["best"]["variant"], target_r=2.0))
+        r = self.run_one(backtest=b)
+        self.assertIn("not the version that backtested well", " ".join(r["reasons"]))
+
+    def test_untested_setups_are_blocked(self):
+        o = tsla()
+        o["plan"] = dict(o["plan"], setup="flag")
+        r = self.run_one(order=o, backtest=self.bt())
+        self.assertIn("never been backtested", " ".join(r["reasons"]))
+
+    def test_switching_it_off(self):
+        self.assertEqual(self.run_one(require_edge=False)["verdict"], "PASS")
+
+    def test_exits_are_never_blocked_by_the_gate(self):
+        sell = {"symbol": "TSLA", "side": "sell", "qty": "8", "type": "market", "time_in_force": "day"}
+        pf = {"cash": 2000, "positions": [{"symbol": "TSLA", "qty": 8, "market_value": 2913.44}]}
+        res = check.check([sell], cfg(require_edge=True), portfolio=pf, now=at(NOW), backtest=None)
+        self.assertEqual(res["results"][0]["verdict"], "PASS", res["results"][0]["reasons"])
+
+    def test_slippage_can_tip_the_max_loss(self):
+        r = self.run_one(require_edge=False, max_loss_per_trade_usd=48)
+        self.assertIn("slippage", " ".join(r["reasons"]))      # 46.88 at the stop, 48.61 with slippage
+        self.assertEqual(self.run_one(require_edge=False, max_loss_per_trade_usd=48, slip_bps=0)["verdict"],
+                         "PASS")

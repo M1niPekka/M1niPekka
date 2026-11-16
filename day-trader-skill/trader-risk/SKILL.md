@@ -20,6 +20,15 @@ argument-hint: "[path to orders.json]"
 
 # trader-risk
 
+> **Added in this fork: the edge gate.** With `"require_edge": true` (the
+> default in config.example.json) an opening-range-breakout entry is BLOCKED
+> unless `trader/backtest.json` from /trader-backtest is under
+> `max_backtest_age_days` (7) old, says `edge: true`, and the order's
+> reward:risk matches the tested target. Any other setup is blocked: nothing
+> has tested it after costs. The max-loss check also adds `slip_bps` (3) at the
+> entry and at the stop. Exits are never blocked. Pass `--backtest PATH` to
+> read the evidence from somewhere else.
+
 The Risk Manager is the gate between a proposal and the broker. Every order
 written by trader-budget or trader-broker's flatten passes through it. A
 BLOCK is final for that order: it does not go to the user for a yes, and it

@@ -18,6 +18,15 @@ argument-hint: "[path to plan.json, or TICKER]"
 
 # trader-timemachine
 
+> **Added in this fork: the reality check.** Under the verdict it now prints
+> the average R after costs (`--slip-bps`, default 3 a side, gap-aware stop
+> fills, next-bar-open entries for the real days), a 95 % range on the real
+> days' average, a warning when the replays and the real days disagree (the
+> replays shuffle bars independently and cannot see the trends a breakout
+> needs: trust the real days), and the last /trader-backtest verdict. When
+> the evidence says the trade loses after costs, say so first and recommend
+> skipping it; do not hand off to /trader-budget as if it were a go.
+
 The Time Machine sits between the plan and the money. trader-exit has set
 the entry, the stop and the target. Before anything is sized or sent, this
 skill asks one question: if today plays out like the stock's own last 60

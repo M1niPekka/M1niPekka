@@ -51,6 +51,13 @@ What blocks an entry (on top):
                 time), or the market is closed (weekend, NYSE holiday, outside
                 9:30 to the close; on a 1:00 p.m. early close the window ends
                 3 hours earlier too)
+  edge          only with "require_edge": true (the default): an ORB entry needs a
+                trader/backtest.json from trader-backtest that is under
+                max_backtest_age_days old and says edge: true, and the order's
+                reward:risk must match the backtest's target (10R = hold to flat_by).
+                Other setups are blocked: nothing has tested them after costs.
+  slippage      the loss check adds slip_bps (default 3) at the entry and again
+                at the stop, because a stop fills as a market order
   pdt           only with "pdt_guard": true: 3 day trades already in the last
                 5 business days (a 4th would trip the old pattern-day-trader rule)
 
@@ -73,8 +80,9 @@ DEFAULTS = {
     "max_orders_per_day": 10, "min_reward_risk": 1.0, "require_stop": True,
     "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55",
     "paper": True, "blocked": [], "allow_options": False, "allow_margin": False, "allow_short": False,
-    "pdt_guard": False,
+    "pdt_guard": False, "require_edge": True, "max_backtest_age_days": 7, "slip_bps": 3,
 }
+EDGE_SETUPS = {"orb"}
 ALPACA_FIELDS = ("symbol", "side", "qty", "notional", "type", "time_in_force", "limit_price",
                  "stop_price", "trail_price", "trail_percent", "extended_hours", "client_order_id",
                  "order_class", "take_profit_limit_price", "stop_loss_stop_price",
@@ -370,10 +378,45 @@ def day_trades(state, today):
 
 # ---------------------------------------------------------------- the check
 
-def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=None, price_times=None):
+def edge_check(bt, c, now_utc, setup, rr):
+    """Reasons to block an entry on the evidence (empty = the backtest backs it)."""
+    if not c.get("require_edge"):
+        return []
+    off = " (or set \"require_edge\": false to trade without evidence)"
+    if setup not in EDGE_SETUPS:
+        return ["edge: setup %r has never been backtested after costs; only %s is%s"
+                % (setup or "unknown", ", ".join(sorted(EDGE_SETUPS)), off)]
+    if not isinstance(bt, dict):
+        return ["edge: no trader/backtest.json. Run /trader-backtest first: it tests this setup on 40 stocks "
+                "after costs%s" % off]
+    made = parse_utc(bt.get("created_at"))
+    age = c.get("max_backtest_age_days") or 7
+    if made is None or (now_utc - made).total_seconds() > float(age) * 86400:
+        return ["edge: trader/backtest.json is older than %s days (%s); run /trader-backtest again"
+                % (_num(age), bt.get("created_at"))]
+    if not bt.get("edge"):
+        return ["edge: the last backtest found no edge after costs (%s). The setup lost money on days it was "
+                "not tuned on, so this pack will not take it%s" % (bt.get("edge_reason") or "no reason given", off)]
+    want = _f(((bt.get("best") or {}).get("variant") or {}).get("target_r"))
+    if want and rr is not None:
+        ok = rr >= 9 if want >= 10 else abs(rr - want) <= 0.15
+        if not ok:
+            return ["edge: reward:risk %.2f is not the version that backtested well (target %gR); plan it with "
+                    "/trader-exit %s" % (rr, want, ((bt.get("best") or {}).get("settings") or {}).get(
+                        "trader-exit", ""))]
+    return []
+
+
+def _slip(price, bps):
+    return max(0.01, price * float(bps or 0) / 10000.0) if bps else 0.0
+
+
+def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=None, price_times=None,
+          backtest=None):
     """Pure function. Returns {"results": [...], "pass": n, "block": n, "warnings": [...]}.
 
     now          naive UTC (default: the real clock); its New York date is "today"
+    backtest     trader/backtest.json from trader-backtest (None = there is none)
     price_times  {SYM: naive UTC time of that price}; None = every price counts as fresh"""
     c = dict(DEFAULTS)
     c.update(cfg or {})
@@ -595,10 +638,16 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     risk_ps = risk_c / 100.0
                     shares = q if q is not None else ((value or 0) / ref)
                     max_loss = round(shares * risk_ps, 2)
+                    slip_ps = _slip(ref, c.get("slip_bps")) + _slip(stop, c.get("slip_bps"))
+                    loss_slip = round(shares * (risk_ps + slip_ps), 2)
                     cap = _f(c.get("max_loss_per_trade_usd"))
                     if cap and max_loss > cap + CENT:
                         later.append("loss: %s shares x %s risk a share = %s at the stop, over your %s max loss "
                                      "per trade" % (_num(shares), _p(risk_ps), money(max_loss), money(cap)))
+                    elif cap and loss_slip > cap + CENT:
+                        later.append("loss: %s at the stop plus %s slippage (%s bps in and out) = %s, over your "
+                                     "%s max loss per trade" % (money(max_loss), money(loss_slip - max_loss),
+                                                                _num(c["slip_bps"]), money(loss_slip), money(cap)))
                     min_rr = _f(c.get("min_reward_risk"))
                     if target:
                         if (long and target <= ref + CENT) or (not long and target >= ref - CENT):
@@ -612,6 +661,9 @@ def check(orders, cfg, portfolio=None, prices=None, state=None, today=None, now=
                     elif min_rr:
                         later.append("reward:risk: no target to measure it against (min_reward_risk %s)"
                                      % _num(min_rr))
+            if stop and ref and risk_ps:
+                later.extend(edge_check(backtest, c, now_utc, str(plan.get("setup") or o.get("setup") or "")
+                                        .strip().lower(), rr))
             daily = _f(c.get("max_daily_loss_usd"))
             if daily and max_loss is not None:
                 used = loss_today + batch_loss
@@ -773,6 +825,7 @@ def main(argv=None):
                     help="your account; if missing, a fresh account funded with the budget")
     ap.add_argument("--prices", default="trader/prices.json")
     ap.add_argument("--state", default="trader/state/broker.json", help="what trader-broker placed today")
+    ap.add_argument("--backtest", default="trader/backtest.json", help="the evidence from trader-backtest")
     ap.add_argument("--now", help="pretend it is this New York time, e.g. \"2026-10-19 10:15\"")
     ap.add_argument("--today", help="YYYY-MM-DD (default: today in New York)")
     ap.add_argument("--out", default="trader/state/risk.json", help="where the verdicts are recorded")
@@ -792,7 +845,8 @@ def main(argv=None):
         pdoc = read_json(a.prices, "prices", required=False) or {}
         prices, times = load_prices(pdoc)
         state = read_json(a.state, "broker state", required=False)
-        res = check(orders, cfg, portfolio, prices, state, a.today, now, times)
+        bt = read_json(a.backtest, "backtest", required=False)
+        res = check(orders, cfg, portfolio, prices, state, a.today, now, times, bt)
         if pdoc.get("as_of"):
             res["prices_as_of"] = pdoc["as_of"]
         if not a.no_write:

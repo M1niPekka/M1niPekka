@@ -124,7 +124,7 @@ class Flow(unittest.TestCase):
 
     def run_risk(self, now=NOW):
         with redirect_stdout(io.StringIO()):
-            return check.main(["--orders", self.orders, "--config", self.cfg, "--portfolio", self.pf,
+            return check.main(["--orders", self.orders, "--config", self.cfg, "--backtest", os.path.join(FIX, "trader-risk", "backtest-edge.json"), "--portfolio", self.pf,
                                "--prices", self.none, "--state", self.state, "--now", now, "--out", self.risk])
 
     def state_doc(self):
@@ -189,7 +189,7 @@ class Flow(unittest.TestCase):
         self.assertIn("max loss $46.88", text)
 
         # trader-risk now counts it: a second TSLA buy today is a duplicate, and $46.88 is used
-        res = check.check([tsla()], {"budget": 5000}, state=st, now=check.parse_now("2026-10-19 10:30"))
+        res = check.check([tsla()], {"budget": 5000, "require_edge": False}, state=st, now=check.parse_now("2026-10-19 10:30"))
         self.assertIn("already placed today", " ".join(res["results"][0]["reasons"]))
         self.assertEqual((res["today"]["entries_placed"], res["today"]["loss_at_risk"]), (1, 46.88))
 

@@ -21,6 +21,21 @@ an order on its own. Paper trading is the default.
 > [github.com/Jakeschincariol/trader-skill](https://github.com/Jakeschincariol/trader-skill).
 > This repo is its day-trading sequel: the Trader skill v2.
 
+## What this fork fixes
+
+The original pack never checks whether its setup makes money. It does now. A review found these flaws, all fixed here:
+
+1. **No evidence of an edge.** Nothing tested the opening-range breakout beyond one stock's 33 trades. New `/trader-backtest` runs it on 40 liquid stocks, 432 variants, with a walk-forward split: settings are picked on the oldest 60 % of days and graded only on the newest 40 %. On November 16, 2026, the default rule lost **-0.11R a trade in-sample and -0.09R out-of-sample (1,269 trades, t-stat -3.4 and -2.2)**. The best-looking variant flipped from +0.32R to -0.31R out-of-sample. Only 1 % of variants made money out-of-sample.
+2. **No costs anywhere.** Every fill was at the exact price. The backtester, the Time Machine's new reality check, the budget and the risk check now pay slippage (`slip_bps`, default 3 a side).
+3. **Entries you could not get.** The history replay bought the signal bar's close. The after-cost numbers enter on the next bar's open.
+4. **Gaps through the stop counted as -1R.** They now fill at the bar's open.
+5. **The 10,000 replays cannot see an edge.** They shuffle bars independently, which erases the trends and reversals a breakout depends on. On the reel's TSLA trade, the replays said +0.034R and the real days said -0.062R (-0.122R after costs). The Time Machine now prints that disagreement and tells you to trust the real days.
+6. **33 trades is not a sample.** The Time Machine now prints a 95 % range: -0.45R to +0.21R for the reel trade, so it cannot tell an edge from luck.
+7. **Position size ignored slippage.** `/trader-budget` sizes to the max loss including slippage; `/trader-risk` blocks orders that only fit the limit before slippage.
+8. **Nothing stopped you trading a losing setup.** `/trader-risk` now blocks ORB entries unless `trader/backtest.json` is under 7 days old and says `edge: true` (`"require_edge": true`). Exits are never blocked.
+
+The honest result: as of the last backtest, the setup has no edge after costs, so this pack will refuse to trade it. Run `/trader-backtest` weekly; if a version shows a real out-of-sample edge, it prints the exact settings to use. No tool can make day trading profitable. This one stops you from paying to find that out.
+
 ## Install
 
 Paste this into Claude:
@@ -72,6 +87,7 @@ or in the `SEC_USER_AGENT` environment variable.
 | `/trader-alerts` | Price Alerts | Rings when a price, a stop or the opening bell hits. |
 | `/trader-analyst` | Earnings Analyst | Reads earnings reports and sums up what changed. |
 | `/trader-pelosi` | Pelosi Tracker | Reads Congress's stock-trade disclosures the minute they are filed. |
+| `/trader-backtest` | Backtester | Tests the setup on 40 stocks after costs, on days it was not tuned on. Added in this fork; trader-risk blocks ORB entries unless it finds an edge. |
 
 ## How to use it
 
@@ -79,6 +95,7 @@ Everything lands in a `trader/` folder in your project, and each skill reads
 what the last one wrote:
 
 ```
+backtest (weekly: is there an edge after costs?)
 scanner -> news -> entry -> exit -> timemachine -> budget -> risk -> broker   (one trade)
 alerts: stop, target, flat by the close                                       (while it is open)
 news / analyst / pelosi                                                        (on a schedule)
@@ -133,6 +150,7 @@ python3 trader-news/news.py --tickers TSLA --hours 12                  # headlin
 python3 trader-entry/entry.py check TSLA --setup orb                   # waiting / triggered / expired
 python3 trader-entry/entry.py watch TSLA --every 30                    # bar by bar until it triggers
 python3 trader-exit/exit.py plan --stop or-mid --target 1R --write     # -> trader/plan.json
+python3 trader-backtest/backtest.py run                                 # 40 stocks, after costs -> trader/backtest.json
 python3 trader-timemachine/timemachine.py run --write                  # 10,000 replays + the history
 python3 trader-budget/size.py --write                                  # -> trader/orders.json
 python3 trader-risk/check.py                                           # PASS / BLOCK per order
@@ -210,6 +228,7 @@ trader-broker/      SKILL.md, ticket.py, claude_desktop_config.example.json
 trader-alerts/      SKILL.md, alerts.py, alerts.example.json
 trader-analyst/     SKILL.md, facts.py, metrics.example.json
 trader-pelosi/      SKILL.md, ptr.py
+trader-backtest/    SKILL.md, backtest.py
 tests/              unittest suite + offline fixtures
 ```
 

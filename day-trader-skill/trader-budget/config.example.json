@@ -21,5 +21,8 @@
   "allow_margin": false,
   "allow_short": false,
   "pdt_guard": false,
+  "require_edge": true,
+  "max_backtest_age_days": 7,
+  "slip_bps": 3,
   "sec_user_agent": "Your Name you@example.com"
 }

@@ -94,6 +94,8 @@ HIST_BINS = 24
 COIN_FLIP = 0.05     # verdict thresholds, see the docstring
 STRONG = 0.15
 MANY_NEITHER = 0.40
+SLIP_BPS = 3.0       # default slippage per side for the after-cost numbers (min 1 cent)
+MIN_HISTORY = 30     # fewer real trades than this cannot tell a small edge from luck
 EPOCH = datetime.datetime(1970, 1, 1)
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 NYSE_EARLY_CLOSE = {  # 1:00 p.m. ET, from https://www.nyse.com/markets/hours-calendars (read 2026-10-13)
@@ -346,9 +348,17 @@ def pct(a, q):
     return a[min(len(a) - 1, int(q * len(a)))]
 
 
-def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=2, side="buy"):
-    """Monte Carlo replays of bars k+1..last. Same draws and order as the reel's sim.py."""
+def slip(price, bps):
+    return max(0.01, price * bps / 10000.0) if bps else 0.0
+
+
+def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=2, side="buy", slip_bps=SLIP_BPS):
+    """Monte Carlo replays of bars k+1..last. Same draws and order as the reel's sim.py.
+    avg_R is the reel's number (fills exactly at the levels). avg_R_net pays slip_bps
+    on the way in and out, and fills a stop at the bar's open when it gaps through."""
     long = side == "buy"
+    sgn = 1 if long else -1
+    e_fill = entry + sgn * slip(entry, slip_bps)
     risk = (entry - stop) if long else (stop - entry)
     r_target = round(((target - entry) if long else (entry - target)) / risk, 4)
 
@@ -357,31 +367,40 @@ def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=
 
     rng = random.Random(seed)
     choice = rng.choice
-    outcomes, closes, paths = [], [], []
+    outcomes, closes, paths, nets = [], [], [], []
     for n in range(replays):
         p = entry
         outcome = None
+        fill = None
         keep = n < SAMPLE_PATHS
         path = [entry]
         for i in range(k + 1, last + 1):
             o, h, l, c = choice(pool[slot(rng, i)])
             hi, lo, cl = p * h, p * l, p * c
             if outcome is None:
+                op = p * o
                 if long:
                     if lo <= stop:
                         outcome = "stop"        # both inside one bar: count the loss (conservative)
+                        fill = min(op, stop) - slip(stop, slip_bps)
                     elif hi >= target:
                         outcome = "target"
+                        fill = target
                 else:
                     if hi >= stop:
                         outcome = "stop"
+                        fill = max(op, stop) + slip(stop, slip_bps)
                     elif lo <= target:
                         outcome = "target"
+                        fill = target
             p = cl
             if keep:
                 path.append(round(p, 2))
         outcomes.append(outcome or "close")
         closes.append(p)
+        if fill is None:
+            fill = p - sgn * slip(p, slip_bps)
+        nets.append(sgn * (fill - e_fill) / risk)
         if keep:
             paths.append(path)
     cnt = {x: outcomes.count(x) for x in ("target", "stop", "close")}
@@ -419,6 +438,7 @@ def simulate(pool, entry, stop, target, k, last, replays=10000, seed=19, window=
         "p_neither": round(cnt["close"] / replays, 4), "p_green": round(green / replays, 4),
         "median_close": round(pct(srt, 0.5), 2), "p5_close": round(pct(srt, 0.05), 2),
         "p95_close": round(pct(srt, 0.95), 2), "avg_R": round(statistics.mean(Rs), 3),
+        "avg_R_net": round(statistics.mean(nets), 3), "slip_bps": slip_bps,
         "r_at_target": r_target, "band_paths": BAND_PATHS, "bands": bands, "sample_paths": paths,
         "hist": {"lo": round(lo_, 2), "hi": round(hi_, 2), "bins": bins},
     }
@@ -448,7 +468,7 @@ def rule_stop(rule, oh, ol, entry, long):
     return cents_away(entry * (1 - frac) if long else entry * (1 + frac), long)
 
 
-def history_replay(sessions, rule, last, side="buy"):
+def history_replay(sessions, rule, last, side="buy", slip_bps=SLIP_BPS):
     """The plan's rule on every past full session: entry = the first bar after the
     opening range to close beyond it (up to the --until bar), then stop first, then
     target, bar by bar, else the close at --until."""
@@ -477,8 +497,9 @@ def history_replay(sessions, rule, last, side="buy"):
         cl = D[last]["c"]
         R = ((t - e) if long else (e - t)) / risk if oc == "target" else -1.0 if oc == "stop" else \
             ((cl - e) if long else (e - cl)) / risk
+        R_net = net_R(D, kk, last, e, s, t, risk, long, slip_bps)
         trades.append({"date": d, "time": clock12(OPEN_MIN + 5 * (kk + 1)), "entry": e, "stop": s, "target": t,
-                       "outcome": oc or "close", "R": round(R, 2)})
+                       "outcome": oc or "close", "R": round(R, 2), "R_net": round(R_net, 2)})
     return {
         "sessions": len(sessions), "triggered": len(trades),
         "target": sum(1 for x in trades if x["outcome"] == "target"),
@@ -486,8 +507,39 @@ def history_replay(sessions, rule, last, side="buy"):
         "close": sum(1 for x in trades if x["outcome"] == "close"),
         "green": sum(1 for x in trades if x["R"] > 0),
         "avg_R": round(statistics.mean(x["R"] for x in trades), 3) if trades else None,
+        "avg_R_net": round(statistics.mean(x["R_net"] for x in trades), 3) if trades else None,
+        "ci95_R_net": ci95([x["R_net"] for x in trades]),
         "rule": rule, "trades": trades,
     }
+
+
+def ci95(rs):
+    """Half-width of the 95 % confidence interval of the mean (None under 2 trades)."""
+    if len(rs) < 2:
+        return None
+    return round(1.96 * statistics.stdev(rs) / math.sqrt(len(rs)), 3)
+
+
+def net_R(D, kk, last, e, s, t, risk, long, bps):
+    """The same trade with real-world fills: in at the NEXT bar's open plus slippage
+    (the signal is a close you have already seen), a stop that gaps fills at the
+    open, stops and the flat-by exit pay slippage, the target is a limit that fills
+    only when price trades through it. Same stop and target prices as the plan."""
+    sgn = 1 if long else -1
+    if kk + 1 > last:
+        return 0.0
+    ef = D[kk + 1]["o"] + sgn * slip(D[kk + 1]["o"], bps)
+    for i in range(kk + 1, last + 1):
+        b = D[i]
+        hit_stop = (b["l"] <= s) if long else (b["h"] >= s)
+        if i > kk + 1 and ((b["o"] <= s) if long else (b["o"] >= s)):
+            return sgn * (b["o"] - sgn * slip(b["o"], bps) - ef) / risk
+        if hit_stop:
+            return sgn * (s - sgn * slip(s, bps) - ef) / risk
+        if (b["h"] > t) if long else (b["l"] < t):
+            return sgn * (t - ef) / risk
+    cl = D[last]["c"]
+    return sgn * (cl - sgn * slip(cl, bps) - ef) / risk
 
 
 # ---------------------------------------------------------------- the plan
@@ -662,6 +714,37 @@ def verdict(mc):
             "it did in %.0f %% (%s)." % (head, round(r, 2), 100 * even, 100 * share, odds))
 
 
+def reality_notes(mc, history, backtest=None):
+    """What the reel's verdict leaves out: costs, sample size, and whether the
+    replays and the real days even agree. Printed under the verdict."""
+    out = []
+    if mc.get("avg_R_net") is not None:
+        out.append("After costs (%g bps a side, gap fills): the replays average %+.3fR a trade, not %+.3fR."
+                   % (mc.get("slip_bps", SLIP_BPS), mc["avg_R_net"], mc["avg_R"]))
+    h = history or {}
+    if h.get("triggered"):
+        out.append("After costs on the %d real days it fired: %+.3fR a trade (95 %% range %+.3f to %+.3f)."
+                   % (h["triggered"], h["avg_R_net"], h["avg_R_net"] - (h.get("ci95_R_net") or 0),
+                      h["avg_R_net"] + (h.get("ci95_R_net") or 0)))
+        if h["triggered"] < MIN_HISTORY:
+            out.append("%d real trades is too few to tell an edge from luck (need %d+ on many stocks): "
+                       "run /trader-backtest." % (h["triggered"], MIN_HISTORY))
+        if (mc.get("avg_R", 0) > 0) != (h["avg_R"] > 0):
+            out.append("The replays and the real days disagree (%+.3fR vs %+.3fR). The replays shuffle bars "
+                       "independently, which erases the trends and reversals a breakout lives on, so trust "
+                       "the real days over the replays." % (mc["avg_R"], h["avg_R"]))
+    if isinstance(backtest, dict) and "edge" in backtest:
+        out.append("Last backtest (%s, %d stocks): %s." % (
+            str(backtest.get("created_at", "?"))[:10], len(backtest.get("symbols") or []),
+            "edge after costs" if backtest["edge"] else "NO edge after costs (%s)" % backtest.get("edge_reason")))
+    else:
+        out.append("No trader/backtest.json: nothing has tested this setup on many stocks after costs yet.")
+    if (h.get("triggered") and h["avg_R_net"] <= 0) or (isinstance(backtest, dict) and backtest.get("edge") is False):
+        out.append("Bottom line: the evidence says this trade loses money after costs. Skipping it is the "
+                   "better choice.")
+    return out
+
+
 def verdict_notes(mc):
     """The lines printed right below the verdict, so nothing reads as one-sided."""
     notes = []
@@ -676,7 +759,8 @@ def verdict_notes(mc):
     return notes
 
 
-def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=None, source="yahoo"):
+def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=None, source="yahoo",
+                 slip_bps=SLIP_BPS, backtest=None):
     """Chart JSON text + a normalized plan -> the timemachine.json document."""
     if not 1 <= replays <= 1000000:
         raise TMError("--replays must be between 1 and 1,000,000")
@@ -721,7 +805,8 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
         raise TMError("only %d full session(s) of %s before %s in the data; the time machine needs at least %d"
                       % (len(sessions), sym, plan["date"], MIN_SESSIONS))
     pool = build_pool(sessions)
-    mc = simulate(pool, plan["entry"], plan["stop"], plan["target"], k, last, replays, seed, window, plan["side"])
+    mc = simulate(pool, plan["entry"], plan["stop"], plan["target"], k, last, replays, seed, window, plan["side"],
+                  slip_bps)
     mc = dict(mc, until=clock24(until_min), pool_sessions=len(sessions), pool_from=sessions[0][0],
               pool_to=sessions[-1][0],
               band_times=[clock24(OPEN_MIN + 5 * (j + 1)) for j in range(k, last + 1)])
@@ -729,7 +814,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
     plan_out = {kk: v for kk, v in plan.items() if v is not None}
     if rule:
         plan_out["stop_rule"] = rule["stop_rule"]
-        history = history_replay(sessions, rule, last, plan["side"])
+        history = history_replay(sessions, rule, last, plan["side"], slip_bps)
     else:
         history = {"sessions": len(sessions), "triggered": 0, "rule": None, "trades": [],
                    "note": "skipped: the history replay knows the opening-range breakout (orb) only, "
@@ -747,6 +832,7 @@ def time_machine(text, plan, now_utc, replays=10000, seed=19, window=2, until=No
         "history": history,
         "verdict": verdict(mc),
         "verdict_notes": verdict_notes(mc),
+        "reality": reality_notes(mc, history, backtest),
         "warnings": warn,
         "note": ("A simulation built from %s's own last %d full sessions. It is not a prediction: earnings, "
                  "news and halts can do things those sessions never did. Same seed, same numbers." % (sym, len(sessions))),
@@ -801,6 +887,8 @@ def report(doc):
     else:
         lines.append("History: " + h.get("note", "skipped."))
     lines += ["", doc["verdict"]] + list(doc.get("verdict_notes") or []) + [""]
+    if doc.get("reality"):
+        lines += ["Reality check:"] + ["  " + x for x in doc["reality"]] + [""]
     for w in doc.get("warnings") or []:
         lines.append("Note: " + w + ".")
     if doc["data"]["short_sessions_left_out"]:
@@ -874,7 +962,14 @@ def compute(a):
         text, source = read_offline(a.offline, plan["symbol"]), "offline"
     else:
         text, source = fetch_chart(plan["symbol"]), "yahoo"
-    return time_machine(text, plan, now, a.replays, a.seed, a.window, a.until, source)
+    bt = None
+    if a.backtest and os.path.exists(a.backtest):
+        try:
+            with open(a.backtest, encoding="utf-8") as fh:
+                bt = json.load(fh)
+        except ValueError:
+            bt = None
+    return time_machine(text, plan, now, a.replays, a.seed, a.window, a.until, source, a.slip_bps, bt)
 
 
 def cmd_run(a):
@@ -888,7 +983,10 @@ def cmd_run(a):
         print("\n".join(report(doc)))
         if a.write:
             print("Wrote %s." % a.write)
-        print("Next: /trader-budget sizes it to your budget and your max loss per trade.")
+        if any(x.startswith("Bottom line") for x in doc.get("reality") or []):
+            print("Next: skip this one. trader-risk will block it while require_edge is on.")
+        else:
+            print("Next: /trader-budget sizes it to your budget and your max loss per trade.")
     return 0
 
 
@@ -931,6 +1029,9 @@ def main(argv=None):
         p.add_argument("--until", help="end each replay at this time (default 16:00, the close)")
         p.add_argument("--offline", metavar="FILE", help="a saved Yahoo chart JSON (.json or .json.gz), no network")
         p.add_argument("--now", help='pretend it is this time ("2026-10-19 10:15" New York, or ISO with Z)')
+        p.add_argument("--slip-bps", type=float, default=SLIP_BPS,
+                       help="slippage per side for the after-cost numbers (default %g)" % SLIP_BPS)
+        p.add_argument("--backtest", default="trader/backtest.json", help="the evidence from trader-backtest")
 
     p = sub.add_parser("run", help="replay the plan: 10,000 simulated sessions plus the history")
     common(p)

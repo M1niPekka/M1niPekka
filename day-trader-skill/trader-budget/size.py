@@ -82,6 +82,7 @@ DEFAULTS = {
     "allow_margin": False,
     "allow_short": False,
     "pdt_guard": False,
+    "slip_bps": 3,
 }
 EPS = 1e-9
 FRESH_MINUTES = 15
@@ -364,10 +365,15 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
     available = max(round(available, 2), 0.0)
 
     limits = []
+    bps = float(c.get("slip_bps") or 0)
+    slip_ps = round((max(0.01, ref * bps / 10000.0) + max(0.01, stop * bps / 10000.0)) if bps else 0.0, 4)
     max_loss = _f(c.get("max_loss_per_trade_usd"))
     if max_loss:
-        limits.append({"name": "max loss", "usd": max_loss, "per": risk, "shares": shares_for(max_loss, risk),
-                       "how": "%s max loss / %s risk a share" % (money(max_loss), _price(risk))})
+        per = risk + slip_ps        # a stop fills as a market order: size for the loss you will really take
+        limits.append({"name": "max loss", "usd": max_loss, "per": round(per, 4), "shares": shares_for(max_loss, per),
+                       "how": "%s max loss / (%s risk + %s slippage) a share"
+                              % (money(max_loss), _price(risk), _price(slip_ps))
+                              if slip_ps else "%s max loss / %s risk a share" % (money(max_loss), _price(risk))})
     cap_pct = _f(c.get("max_position_pct"))
     if cap_pct:
         cap = round(budget * cap_pct / 100.0, 2)
@@ -410,7 +416,8 @@ def size_trade(plan, cfg, budget=None, limit=None, price=None, cash=None, today=
         "stop_label": plan.get("stop_label", ""), "target_label": plan.get("target_label", ""),
         "budget": budget, "cash_buffer_pct": buf_pct, "cash_buffer": cash_buffer, "cash_available": available,
         "max_loss_per_trade_usd": max_loss, "limits": limits, "qty": qty, "bound_by": bound[0],
-        "cost": cost, "max_loss": loss, "flat_by": plan.get("flat_by") or c.get("flat_by"),
+        "cost": cost, "max_loss": loss, "slip_per_share": slip_ps,
+        "max_loss_with_slippage": round(qty * (risk + slip_ps), 2), "flat_by": plan.get("flat_by") or c.get("flat_by"),
         "order_type": "limit" if limit is not None else "market", "refusal": refusal,
     }
 

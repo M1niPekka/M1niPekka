@@ -25,6 +25,7 @@ CONTRACT_CFG = {
     "no_entries_before": "09:45", "no_entries_after": "15:30", "flat_by": "15:55",
     "fractional": False, "broker": "alpaca", "paper": True, "blocked": [],
     "allow_options": False, "allow_margin": False, "allow_short": False, "pdt_guard": False,
+    "require_edge": True, "max_backtest_age_days": 7, "slip_bps": 3,
     "sec_user_agent": "Your Name you@example.com",
 }
 # v1's rules, for the weights mode tests
@@ -173,7 +174,9 @@ class PlanRules(unittest.TestCase):
     def test_a_fresh_higher_price_means_a_bigger_risk(self):
         s = size.size_trade(plan(), cfg(min_reward_risk=0), price=366.475, today=TODAY)
         self.assertEqual((s["entry"], s["entry_from"], s["risk_per_share"]), (366.48, "price", 8.16))
-        self.assertEqual((s["qty"], s["max_loss"], s["reward_risk"]), (6, 48.96, 0.44))
+        # 6 shares would be 48.96 at the stop but 50.28 once 3 bps slippage in and out is paid: 5 shares
+        self.assertEqual((s["qty"], s["max_loss"], s["reward_risk"]), (5, 40.8, 0.44))
+        self.assertEqual(s["max_loss_with_slippage"], 41.89)
         self.assertIsNone(s["refusal"])
         s = size.size_trade(plan(), cfg(), price=366.475, today=TODAY)
         self.assertIn("reward:risk 0.44 (target 370.04, entry 366.48, stop 358.32) is under your minimum 1",
@@ -190,7 +193,7 @@ class PlanRules(unittest.TestCase):
             base = ["--plan", PLAN, "--config", CFG, "--portfolio", os.path.join(d, "none"), "--prices", pp, "--json"]
             code, text, _ = run(base + ["--now", "2026-10-19 10:55"])
             out = json.loads(text)
-            self.assertEqual((code, out["sizing"]["qty"], out["orders"]), (1, 6, []))
+            self.assertEqual((code, out["sizing"]["qty"], out["orders"]), (1, 5, []))
             self.assertIn("above the plan's entry", out["notes"][0])
             out = json.loads(run(base + ["--now", "2026-10-19 11:30"])[1])
             self.assertEqual(out["sizing"]["qty"], 8)
@@ -225,10 +228,17 @@ class PlanRules(unittest.TestCase):
 
     def test_under_the_minimum_order(self):
         cheap = plan(symbol="ABC", entry=4.0, stop=3.0, target=5.0)
-        s = size.size_trade(cheap, cfg(max_loss_per_trade_usd=1), today=TODAY)
+        s = size.size_trade(cheap, cfg(max_loss_per_trade_usd=1, slip_bps=0), today=TODAY)
         self.assertEqual(s["qty"], 1)
         self.assertIn("under your $5 minimum order", s["refusal"])
         self.assertIsNone(size.bracket_order(s))
+
+    def test_sizing_pays_for_slippage(self):
+        s = size.size_trade(plan(), cfg(), today=TODAY)
+        self.assertEqual((s["qty"], s["slip_per_share"], s["max_loss_with_slippage"]), (8, 0.2167, 48.61))
+        tight = size.size_trade(plan(), cfg(max_loss_per_trade_usd=48), today=TODAY)
+        self.assertEqual(tight["qty"], 7)        # 8 x 5.86 = 46.88 fits 48, but 8 x 6.08 = 48.61 does not
+        self.assertEqual(size.size_trade(plan(), cfg(max_loss_per_trade_usd=48, slip_bps=0), today=TODAY)["qty"], 8)
 
     def test_missing_plan_and_weights_only_flags(self):
         code, _, err = run(["--plan", "/nonexistent/plan.json", "--config", CFG, "--now", NOW])
